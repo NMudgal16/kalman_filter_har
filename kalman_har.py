@@ -2,15 +2,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 from filterpy.kalman import KalmanFilter
 from scipy.signal import savgol_filter
-data = np.loadtxt("C:/Users/kalman p/UCI HAR Dataset/train/Inertial Signals/body_acc_x_train.txt")
+from sklearn.metrics import mean_squared_error
+import os
 
+# Load .txt signal files
+def load_signal(file_path):
+    return np.loadtxt(file_path)
 
-# Moving average
-def moving_average(signal, window_size=5):
-    return np.convolve(signal, np.ones(window_size)/window_size, mode='same')
+# Add synthetic noise
+def add_noise(signal, noise_level=0.2):
+    noise = np.random.normal(0, noise_level, size=signal.shape)
+    return signal + noise
 
-# Kalman filter
-def kalman_filter(signal):
+# Kalman Filter
+def apply_kalman(signal):
     kf = KalmanFilter(dim_x=2, dim_z=1)
     kf.x = np.array([[0.], [0.]])
     kf.F = np.array([[1., 1.], [0., 1.]])
@@ -24,74 +29,100 @@ def kalman_filter(signal):
         kf.predict()
         kf.update(z)
         filtered.append(kf.x[0, 0])
-    return np.array(filtered)
+    return np.array(filtered), kf
 
-# Load signal
-def load_signal(file_path):
-    return np.loadtxt(file_path)
+# Moving Average
+def apply_moving_average(signal, window=5):
+    return np.convolve(signal, np.ones(window)/window, mode='same')
 
-from sklearn.metrics import mean_squared_error
+# Savitzky-Golay Filter
+def apply_savgol(signal, window=11, polyorder=2):
+    return savgol_filter(signal, window_length=window, polyorder=polyorder)
 
-def add_noise(signal, noise_level=0.2):
-    noise = np.random.normal(0, noise_level, size=signal.shape)
-    return signal + noise
+# Forecast using Kalman Filter (future N steps)
+def forecast_kalman(kf, steps=10):
+    forecasts = []
+    for _ in range(steps):
+        kf.predict()
+        forecasts.append(kf.x[0, 0])
+    return forecasts
 
-def apply_kalman(signal):
-    return kalman_filter(signal)
-
-for i in [0, 20, 100]:
-    original_signal = data[i]
-    noisy_signal = add_noise(original_signal)
-
-    kalman = apply_kalman(noisy_signal)
-    moving_avg = moving_average(noisy_signal)
-    savgol = savgol(noisy_signal)
-
-    # Evaluate RMSE
-    rmse_kalman = np.sqrt(mean_squared_error(original_signal, kalman))
-    rmse_avg = np.sqrt(mean_squared_error(original_signal, moving_avg))
-    rmse_savgol = np.sqrt(mean_squared_error(original_signal, savgol))
-
-    print(f"[{sensor_name} - Sample {i}]")
-    print(f"  RMSE Kalman       : {rmse_kalman:.4f}")
-    print(f"  RMSE Moving Avg   : {rmse_avg:.4f}")
-    print(f"  RMSE Savitzky-Golay: {rmse_savgol:.4f}")
-
-    plot_all_filters(noisy_signal, kalman, moving_avg, savgol, i, sensor_name)
-
-# Plot all filters for comparison
-def compare_filters(signal, signal_name, sample_idx):
-    kalman = kalman_filter(signal)
-    moving_avg = moving_average(signal)
-    savgol = savgol_filter(signal, window_length=9, polyorder=2)
-
+# Plot & compare filters
+def plot_all_filters(original, noisy, kalman, ma, sg, sample_idx, sensor_name):
     plt.figure(figsize=(12, 6))
-    plt.plot(signal, label="Original", alpha=0.5)
-    plt.plot(kalman, label="Kalman", linewidth=2)
-    plt.plot(moving_avg, label="Moving Avg", linestyle='--')
-    plt.plot(savgol, label="Savitzky-Golay", linestyle='-.')
-    plt.title(f"{signal_name} Sample #{sample_idx} - Filter Comparison")
+    plt.plot(noisy, label='Noisy', alpha=0.4)
+    plt.plot(kalman, label='Kalman', linewidth=2)
+    plt.plot(ma, label='Moving Avg', linestyle='--')
+    plt.plot(sg, label='Savitzky-Golay', linestyle=':')
+    plt.title(f"{sensor_name} - Sample #{sample_idx}")
     plt.xlabel("Time step")
-    plt.ylabel("Sensor value")
+    plt.ylabel("Sensor Value")
     plt.legend()
     plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(f"plots/{signal_name}_sample_{sample_idx}.png")
-    plt.show()
 
+    os.makedirs("plots", exist_ok=True)
+    plt.savefig(f"plots/{sensor_name}_sample_{sample_idx}.png")
+    plt.close()
+
+# Main logic
 def main():
-    sensors = {
-        "body_acc_x": "UCI HAR Dataset/train/Inertial Signals/body_acc_x_train.txt",
-        "body_acc_y": "UCI HAR Dataset/train/Inertial Signals/body_acc_y_train.txt",
-        "body_gyro_x": "UCI HAR Dataset/train/Inertial Signals/body_gyro_x_train.txt"
-    }
+    print("Starting Kalman Filter Project on HAR Dataset...\n")
 
-    for name, path in sensors.items():
-        print(f"\nProcessing {name}...")
-        data = load_signal(path)
-        for i in [0, 10, 50]:  # Pick a few sample windows
-            signal = data[i]
-            compare_filters(signal, name, i)
+    # List of all 9 Inertial Signals in UCI HAR
+    sensors = [
+        "body_acc_x", "body_acc_y", "body_acc_z",
+        "body_gyro_x", "body_gyro_y", "body_gyro_z",
+        "total_acc_x", "total_acc_y", "total_acc_z"
+    ]
+
+    # Choose samples to test
+    sample_ids = [0, 20, 100]
+
+    for sensor in sensors:
+        file_path = f"UCI HAR Dataset/train/Inertial Signals/{sensor}_train.txt"
+        if not os.path.exists(file_path):
+            print(f"File not found: {file_path}")
+            continue
+
+        print(f"Processing sensor: {sensor}")
+        data = load_signal(file_path)
+
+        for sample_idx in sample_ids:
+            original = data[sample_idx]
+            noisy = add_noise(original, noise_level=0.2)
+
+            kalman_filtered, kf = apply_kalman(noisy)
+            moving_avg = apply_moving_average(noisy)
+            savgol = apply_savgol(noisy)
+
+            # Forecast next 10 values
+            forecast = forecast_kalman(kf, steps=10)
+
+            # RMSE Evaluation
+            rmse_kalman = np.sqrt(mean_squared_error(original, kalman_filtered))
+            rmse_ma = np.sqrt(mean_squared_error(original, moving_avg))
+            rmse_sg = np.sqrt(mean_squared_error(original, savgol))
+
+            print(f" Sample #{sample_idx} RMSE:")
+            print(f"   Kalman       : {rmse_kalman:.4f}")
+            print(f"   Moving Avg   : {rmse_ma:.4f}")
+            print(f"   Savitzky-Golay: {rmse_sg:.4f}")
+
+            # Plot
+            plot_all_filters(original, noisy, kalman_filtered, moving_avg, savgol, sample_idx, sensor)
+
+            # Plot forecast (optional)
+            plt.figure(figsize=(10, 4))
+            plt.plot(kalman_filtered, label="Kalman Filtered")
+            plt.plot(range(len(kalman_filtered), len(kalman_filtered)+len(forecast)), forecast, 'r--', label="Forecast")
+            plt.title(f"{sensor} - Forecast after Sample #{sample_idx}")
+            plt.legend()
+            plt.grid(True)
+            plt.savefig(f"plots/{sensor}_forecast_sample_{sample_idx}.png")
+            plt.close()
+
+    print("\n✅ All signals processed. Plots saved in 'plots/' folder.")
 
 if __name__ == "__main__":
     main()
+
